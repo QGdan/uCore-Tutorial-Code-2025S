@@ -51,16 +51,16 @@ uint64 sys_trace(int trace_request, uint64 id, uint8 data)
 	uint8 byte_val;
 
 	switch (trace_request) {
-	case 0: // read a byte from user address id
+	case 0:
 		if (copyin(p->pagetable, (char *)&byte_val, id, 1) < 0)
 			return (uint64)-1;
 		return byte_val;
-	case 1: // write data to user address id
+	case 1:
 		if (copyout(p->pagetable, id, (char *)&data, 1) < 0)
 			return (uint64)-1;
 		return 0;
-	case 2: // query syscall count for syscall number id
-		if (id >= NSYSCALL)
+	case 2:
+		if (id >= NSYSCALL || p->syscall_counts == 0)
 			return 0;
 		return p->syscall_counts[id];
 	default:
@@ -72,13 +72,10 @@ uint64 sys_mmap(void *start, uint64 len, int prot, int flags)
 {
 	struct proc *p = curr_proc();
 
-	// prot reserved bits must be 0
 	if (prot & ~0x7)
 		return -1;
-	// must have at least one permission
 	if ((prot & 0x7) == 0)
 		return -1;
-	// start must be page-aligned
 	if (!PGALIGNED((uint64)start))
 		return -1;
 
@@ -86,20 +83,17 @@ uint64 sys_mmap(void *start, uint64 len, int prot, int flags)
 	if (aligned_len == 0)
 		return 0;
 
-	// Convert prot to PTE flags
 	int pte_flags = PTE_U;
 	if (prot & 1) pte_flags |= PTE_R;
 	if (prot & 2) pte_flags |= PTE_W;
 	if (prot & 4) pte_flags |= PTE_X;
 
-	// Check if any pages in the range are already mapped
 	for (uint64 va = (uint64)start; va < (uint64)start + aligned_len; va += PGSIZE) {
 		pte_t *pte = walk(p->pagetable, va, 0);
 		if (pte && (*pte & PTE_V))
 			return -1;
 	}
 
-	// Map pages one by one
 	for (uint64 va = (uint64)start; va < (uint64)start + aligned_len; va += PGSIZE) {
 		void *pa = kalloc();
 		if (pa == 0)
@@ -124,7 +118,6 @@ uint64 sys_munmap(void *start, uint64 len)
 	if (aligned_len == 0)
 		return 0;
 
-	// Check all pages in range are mapped and belong to user
 	for (uint64 va = (uint64)start; va < (uint64)start + aligned_len; va += PGSIZE) {
 		pte_t *pte = walk(p->pagetable, va, 0);
 		if (!pte || !(*pte & PTE_V) || !(*pte & PTE_U))
@@ -156,9 +149,16 @@ void syscall()
 	tracef("syscall %d args = [%x, %x, %x, %x, %x, %x]", id, args[0],
 	       args[1], args[2], args[3], args[4], args[5]);
 
-	// Update syscall counter
-	if (id >= 0 && id < NSYSCALL)
-		curr_proc()->syscall_counts[id]++;
+	if (id >= 0 && id < NSYSCALL) {
+		struct proc *p = curr_proc();
+		if (p->syscall_counts == 0) {
+			p->syscall_counts = (uint64 *)kalloc();
+			if (p->syscall_counts)
+				memset(p->syscall_counts, 0, PGSIZE);
+		}
+		if (p->syscall_counts)
+			p->syscall_counts[id]++;
+	}
 
 	switch (id) {
 	case SYS_write:
@@ -166,7 +166,6 @@ void syscall()
 		break;
 	case SYS_exit:
 		sys_exit(args[0]);
-		// __builtin_unreachable();
 	case SYS_sched_yield:
 		ret = sys_sched_yield();
 		break;

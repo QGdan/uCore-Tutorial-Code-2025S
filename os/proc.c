@@ -66,7 +66,7 @@ found:
 	p->max_page = 0;
 	p->program_brk = 0;
         p->heap_bottom = 0;
-	memset(p->syscall_counts, 0, sizeof(p->syscall_counts));
+	p->syscall_counts = 0;
 	memset(&p->context, 0, sizeof(p->context));
 	memset((void *)p->kstack, 0, KSTACK_SIZE);
 	memset((void *)p->trapframe, 0, TRAP_PAGE_SIZE);
@@ -119,7 +119,7 @@ void yield(void)
 void freeproc(struct proc *p)
 {
 	p->state = UNUSED;
-	uvmfree(p->pagetable, p->max_page);
+	// uvmfree(p->pagetable, p->max_page);
 }
 
 // Exit the current process.
