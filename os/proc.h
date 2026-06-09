@@ -7,6 +7,8 @@
 
 #define NPROC (512)
 #define FD_BUFFER_SIZE (16)
+#define BIG_STRIDE (65536)
+#define DEFAULT_PRIORITY (16)
 
 struct file;
 
@@ -47,6 +49,9 @@ struct proc {
 	struct file *files[FD_BUFFER_SIZE];
 	uint64 program_brk;
 	uint64 heap_bottom;
+	uint64 stride;     // Stride scheduling: current stride value
+	uint64 pass;       // Stride scheduling: pass = BIG_STRIDE / priority
+	int priority;      // Process priority (>= 2)
 };
 
 int cpuid();
@@ -67,5 +72,6 @@ int fdalloc(struct file *);
 void swtch(struct context *, struct context *);
 
 int growproc(int n);
+void freeproc(struct proc *);
 
 #endif // PROC_H

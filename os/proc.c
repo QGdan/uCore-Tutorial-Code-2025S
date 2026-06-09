@@ -86,6 +86,9 @@ found:
 	p->pagetable = uvmcreate((uint64)p->trapframe);
 	p->program_brk = 0;
         p->heap_bottom = 0;
+	p->priority = DEFAULT_PRIORITY;
+	p->stride = 0;
+	p->pass = BIG_STRIDE / DEFAULT_PRIORITY;
 	memset(&p->context, 0, sizeof(p->context));
 	memset((void *)p->kstack, 0, KSTACK_SIZE);
 	memset((void *)p->trapframe, 0, TRAP_PAGE_SIZE);
@@ -103,27 +106,27 @@ void scheduler()
 {
 	struct proc *p;
 	for (;;) {
-		/*int has_proc = 0;
-		for (p = pool; p < &pool[NPROC]; p++) {
-			if (p->state == RUNNABLE) {
-				has_proc = 1;
-				tracef("swtich to proc %d", p - pool);
-				p->state = RUNNING;
-				current_proc = p;
-				swtch(&idle.context, &p->context);
+		// Stride scheduling: find RUNNABLE process with minimum stride
+		p = NULL;
+		uint64 min_stride = ~0ULL;
+		for (struct proc *np = pool; np < &pool[NPROC]; np++) {
+			if (np->state == RUNNABLE && np->stride < min_stride) {
+				min_stride = np->stride;
+				p = np;
 			}
 		}
-		if(has_proc == 0) {
-			panic("all app are over!\n");
-		}*/
-		p = fetch_task();
 		if (p == NULL) {
 			panic("all app are over!\n");
 		}
-		tracef("swtich to proc %d", p - pool);
+		tracef("swtich to proc %d(pid=%d, stride=%d, prio=%d)",
+		       p - pool, p->pid, p->stride, p->priority);
 		p->state = RUNNING;
 		current_proc = p;
 		swtch(&idle.context, &p->context);
+		// After time slice, increase stride if process is still runnable
+		if (p->state == RUNNABLE) {
+			p->stride += p->pass;
+		}
 	}
 }
 
@@ -146,7 +149,6 @@ void sched()
 void yield()
 {
 	current_proc->state = RUNNABLE;
-	add_task(current_proc);
 	sched();
 }
 

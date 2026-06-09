@@ -277,6 +277,7 @@
 #define SYS_io_pgetevents 292
 #define SYS_rseq 293
 #define SYS_kexec_file_load 294
+#define SYS_set_priority 140
 #define SYS_spawn 400
 
 #define SYS_pidfd_send_signal 424

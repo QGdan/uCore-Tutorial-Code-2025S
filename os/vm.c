@@ -195,7 +195,10 @@ void freewalk(pagetable_t pagetable)
 			freewalk((pagetable_t)child);
 			pagetable[i] = 0;
 		} else if (pte & PTE_V) {
-			panic("freewalk: leaf");
+			// leaf PTE from mmap: free the physical page
+			uint64 pa = PTE2PA(pte);
+			kfree((void *)pa);
+			pagetable[i] = 0;
 		}
 	}
 	kfree((void *)pagetable);

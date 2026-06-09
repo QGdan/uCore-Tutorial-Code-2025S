@@ -55,7 +55,8 @@ uint64 sys_gettimeofday(uint64 val, int _tz)
 	TimeVal t;
 	t.sec = cycle / CPU_FREQ;
 	t.usec = (cycle % CPU_FREQ) * 1000000 / CPU_FREQ;
-	copyout(p->pagetable, val, (char *)&t, sizeof(TimeVal));
+	if (copyout(p->pagetable, val, (char *)&t, sizeof(TimeVal)) < 0)
+		return -1;
 	return 0;
 }
 
@@ -80,7 +81,8 @@ uint64 sys_exec(uint64 va)
 {
 	struct proc *p = curr_proc();
 	char name[200];
-	copyinstr(p->pagetable, name, va, 200);
+	if (copyinstr(p->pagetable, name, va, 200) < 0)
+		return -1;
 	debugf("sys_exec %s\n", name);
 	return exec(name);
 }
@@ -92,26 +94,114 @@ uint64 sys_wait(int pid, uint64 va)
 	return wait(pid, code);
 }
 
+// sys_spawn: create child process and load program (like fork + exec)
 uint64 sys_spawn(uint64 va)
 {
-	// TODO: your job is to complete the sys call
-	return -1;
+	struct proc *p = curr_proc();
+	char name[200];
+	if (copyinstr(p->pagetable, name, va, 200) < 0)
+		return -1;
+
+	int id = get_id_by_name(name);
+	if (id < 0)
+		return -1;
+
+	struct proc *np = allocproc();
+	if (np == 0)
+		return -1;
+
+	if (loader(id, np) < 0) {
+		freeproc(np);
+		return -1;
+	}
+
+	np->parent = p;
+	np->trapframe->a0 = 0;
+	add_task(np);
+	return np->pid;
 }
 
-uint64 sys_set_priority(long long prio){
-    // TODO: your job is to complete the sys call
-    return -1;
+// sys_set_priority: set process priority for stride scheduling
+uint64 sys_set_priority(long long prio)
+{
+	if (prio < 2)
+		return -1;
+	struct proc *p = curr_proc();
+	p->priority = prio;
+	p->pass = BIG_STRIDE / prio;
+	return prio;
 }
-
 
 uint64 sys_sbrk(int n)
 {
-        uint64 addr;
-        struct proc *p = curr_proc();
-        addr = p->program_brk;
-        if(growproc(n) < 0)
-                return -1;
-        return addr;
+	uint64 addr;
+	struct proc *p = curr_proc();
+	addr = p->program_brk;
+	if (growproc(n) < 0)
+		return -1;
+	return addr;
+}
+
+// ---- migrated from ch4 ----
+
+uint64 sys_mmap(void *start, uint64 len, int prot, int flags)
+{
+	struct proc *p = curr_proc();
+
+	if (prot & ~0x7)
+		return -1;
+	if ((prot & 0x7) == 0)
+		return -1;
+	if (!PGALIGNED((uint64)start))
+		return -1;
+
+	uint64 aligned_len = PGROUNDUP(len);
+	if (aligned_len == 0)
+		return 0;
+
+	int pte_flags = PTE_U;
+	if (prot & 1) pte_flags |= PTE_R;
+	if (prot & 2) pte_flags |= PTE_W;
+	if (prot & 4) pte_flags |= PTE_X;
+
+	for (uint64 va = (uint64)start; va < (uint64)start + aligned_len; va += PGSIZE) {
+		pte_t *pte = walk(p->pagetable, va, 0);
+		if (pte && (*pte & PTE_V))
+			return -1;
+	}
+
+	for (uint64 va = (uint64)start; va < (uint64)start + aligned_len; va += PGSIZE) {
+		void *pa = kalloc();
+		if (pa == 0)
+			return -1;
+		memset(pa, 0, PGSIZE);
+		if (mappages(p->pagetable, va, PGSIZE, (uint64)pa, pte_flags) != 0) {
+			kfree(pa);
+			return -1;
+		}
+	}
+	return 0;
+}
+
+uint64 sys_munmap(void *start, uint64 len)
+{
+	struct proc *p = curr_proc();
+
+	if (!PGALIGNED((uint64)start))
+		return -1;
+
+	uint64 aligned_len = PGROUNDUP(len);
+	if (aligned_len == 0)
+		return 0;
+
+	for (uint64 va = (uint64)start; va < (uint64)start + aligned_len; va += PGSIZE) {
+		pte_t *pte = walk(p->pagetable, va, 0);
+		if (!pte || !(*pte & PTE_V) || !(*pte & PTE_U))
+			return -1;
+	}
+
+	uvmunmap(p->pagetable, (uint64)start, aligned_len / PGSIZE, 1);
+	return 0;
 }
 
 extern char trap_page[];
@@ -133,7 +223,6 @@ void syscall()
 		break;
 	case SYS_exit:
 		sys_exit(args[0]);
-		// __builtin_unreachable();
 	case SYS_sched_yield:
 		ret = sys_sched_yield();
 		break;
@@ -146,7 +235,7 @@ void syscall()
 	case SYS_getppid:
 		ret = sys_getppid();
 		break;
-	case SYS_clone: // SYS_fork
+	case SYS_clone:
 		ret = sys_clone();
 		break;
 	case SYS_execve:
@@ -158,9 +247,18 @@ void syscall()
 	case SYS_spawn:
 		ret = sys_spawn(args[0]);
 		break;
+	case SYS_set_priority:
+		ret = sys_set_priority(args[0]);
+		break;
 	case SYS_sbrk:
-                ret = sys_sbrk(args[0]);
-                break;
+		ret = sys_sbrk(args[0]);
+		break;
+	case SYS_mmap:
+		ret = sys_mmap((void *)args[0], args[1], args[2], args[3]);
+		break;
+	case SYS_munmap:
+		ret = sys_munmap((void *)args[0], args[1]);
+		break;
 	default:
 		ret = -1;
 		errorf("unknown syscall %d", id);
