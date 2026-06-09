@@ -33,17 +33,105 @@ uint64 sys_sched_yield()
 	return 0;
 }
 
-uint64 sys_gettimeofday(TimeVal *val, int _tz) // TODO: implement sys_gettimeofday in pagetable. (VA to PA)
+uint64 sys_gettimeofday(TimeVal *val, int _tz)
 {
-	// YOUR CODE
-	val->sec = 0;
-	val->usec = 0;
+	struct proc *p = curr_proc();
+	TimeVal tv;
+	uint64 cycle = get_cycle();
+	tv.sec = cycle / CPU_FREQ;
+	tv.usec = (cycle % CPU_FREQ) * 1000000 / CPU_FREQ;
+	if (copyout(p->pagetable, (uint64)val, (char *)&tv, sizeof(TimeVal)) < 0)
+		return -1;
+	return 0;
+}
 
-	/* The code in `ch3` will leads to memory bugs*/
+uint64 sys_trace(int trace_request, uint64 id, uint8 data)
+{
+	struct proc *p = curr_proc();
+	uint8 byte_val;
 
-	// uint64 cycle = get_cycle();
-	// val->sec = cycle / CPU_FREQ;
-	// val->usec = (cycle % CPU_FREQ) * 1000000 / CPU_FREQ;
+	switch (trace_request) {
+	case 0: // read a byte from user address id
+		if (copyin(p->pagetable, (char *)&byte_val, id, 1) < 0)
+			return (uint64)-1;
+		return byte_val;
+	case 1: // write data to user address id
+		if (copyout(p->pagetable, id, (char *)&data, 1) < 0)
+			return (uint64)-1;
+		return 0;
+	case 2: // query syscall count for syscall number id
+		if (id >= NSYSCALL)
+			return 0;
+		return p->syscall_counts[id];
+	default:
+		return (uint64)-1;
+	}
+}
+
+uint64 sys_mmap(void *start, uint64 len, int prot, int flags)
+{
+	struct proc *p = curr_proc();
+
+	// prot reserved bits must be 0
+	if (prot & ~0x7)
+		return -1;
+	// must have at least one permission
+	if ((prot & 0x7) == 0)
+		return -1;
+	// start must be page-aligned
+	if (!PGALIGNED((uint64)start))
+		return -1;
+
+	uint64 aligned_len = PGROUNDUP(len);
+	if (aligned_len == 0)
+		return 0;
+
+	// Convert prot to PTE flags
+	int pte_flags = PTE_U;
+	if (prot & 1) pte_flags |= PTE_R;
+	if (prot & 2) pte_flags |= PTE_W;
+	if (prot & 4) pte_flags |= PTE_X;
+
+	// Check if any pages in the range are already mapped
+	for (uint64 va = (uint64)start; va < (uint64)start + aligned_len; va += PGSIZE) {
+		pte_t *pte = walk(p->pagetable, va, 0);
+		if (pte && (*pte & PTE_V))
+			return -1;
+	}
+
+	// Map pages one by one
+	for (uint64 va = (uint64)start; va < (uint64)start + aligned_len; va += PGSIZE) {
+		void *pa = kalloc();
+		if (pa == 0)
+			return -1;
+		memset(pa, 0, PGSIZE);
+		if (mappages(p->pagetable, va, PGSIZE, (uint64)pa, pte_flags) != 0) {
+			kfree(pa);
+			return -1;
+		}
+	}
+	return 0;
+}
+
+uint64 sys_munmap(void *start, uint64 len)
+{
+	struct proc *p = curr_proc();
+
+	if (!PGALIGNED((uint64)start))
+		return -1;
+
+	uint64 aligned_len = PGROUNDUP(len);
+	if (aligned_len == 0)
+		return 0;
+
+	// Check all pages in range are mapped and belong to user
+	for (uint64 va = (uint64)start; va < (uint64)start + aligned_len; va += PGSIZE) {
+		pte_t *pte = walk(p->pagetable, va, 0);
+		if (!pte || !(*pte & PTE_V) || !(*pte & PTE_U))
+			return -1;
+	}
+
+	uvmunmap(p->pagetable, (uint64)start, aligned_len / PGSIZE, 1);
 	return 0;
 }
 
@@ -54,17 +142,8 @@ uint64 sys_sbrk(int n)
         addr = p->program_brk;
         if(growproc(n) < 0)
                 return -1;
-        return addr;	
+        return addr;
 }
-
-
-
-// TODO: add support for mmap and munmap syscall.
-// hint: read through docstrings in vm.c. Watching CH4 video may also help.
-// Note the return value and PTE flags (especially U,X,W,R)
-/*
-* LAB1: you may need to define sys_trace here
-*/
 
 extern char trap_page[];
 
@@ -76,9 +155,11 @@ void syscall()
 			   trapframe->a3, trapframe->a4, trapframe->a5 };
 	tracef("syscall %d args = [%x, %x, %x, %x, %x, %x]", id, args[0],
 	       args[1], args[2], args[3], args[4], args[5]);
-	/*
-	* LAB1: you may need to update syscall counter here
-	*/
+
+	// Update syscall counter
+	if (id >= 0 && id < NSYSCALL)
+		curr_proc()->syscall_counts[id]++;
+
 	switch (id) {
 	case SYS_write:
 		ret = sys_write(args[0], args[1], args[2]);
@@ -95,9 +176,15 @@ void syscall()
 	case SYS_sbrk:
 		ret = sys_sbrk(args[0]);
 		break;
-	/*
-	* LAB1: you may need to add SYS_trace case here
-	*/
+	case SYS_trace:
+		ret = sys_trace(args[0], args[1], args[2]);
+		break;
+	case SYS_mmap:
+		ret = sys_mmap((void *)args[0], args[1], args[2], args[3]);
+		break;
+	case SYS_munmap:
+		ret = sys_munmap((void *)args[0], args[1]);
+		break;
 	default:
 		ret = -1;
 		errorf("unknown syscall %d", id);

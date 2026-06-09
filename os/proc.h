@@ -5,6 +5,7 @@
 #include "types.h"
 
 #define NPROC (24)
+#define NSYSCALL (512)
 
 // Saved registers for kernel context switches.
 struct context {
@@ -40,6 +41,7 @@ struct proc {
 	uint64 max_page;
 	uint64 program_brk;
 	uint64 heap_bottom;
+	uint64 syscall_counts[NSYSCALL];
 	/*
 	* LAB1: you may need to add some new fields here
 	*/
