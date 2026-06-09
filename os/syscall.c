@@ -49,13 +49,20 @@ uint64 sys_trace(int trace_request, uint64 id, uint8 data)
 {
 	struct proc *p = curr_proc();
 	uint8 byte_val;
+	pte_t *pte;
 
 	switch (trace_request) {
 	case 0:
+		pte = walk(p->pagetable, id, 0);
+		if (!pte || !(*pte & PTE_V) || !(*pte & PTE_U) || !(*pte & PTE_R))
+			return (uint64)-1;
 		if (copyin(p->pagetable, (char *)&byte_val, id, 1) < 0)
 			return (uint64)-1;
 		return byte_val;
 	case 1:
+		pte = walk(p->pagetable, id, 0);
+		if (!pte || !(*pte & PTE_V) || !(*pte & PTE_U) || !(*pte & PTE_W))
+			return (uint64)-1;
 		if (copyout(p->pagetable, id, (char *)&data, 1) < 0)
 			return (uint64)-1;
 		return 0;
@@ -128,6 +135,11 @@ uint64 sys_munmap(void *start, uint64 len)
 	return 0;
 }
 
+uint64 sys_getpid(void)
+{
+	return curr_proc()->pid;
+}
+
 uint64 sys_sbrk(int n)
 {
 	uint64 addr;
@@ -174,6 +186,9 @@ void syscall()
 		break;
 	case SYS_sbrk:
 		ret = sys_sbrk(args[0]);
+		break;
+	case SYS_getpid:
+		ret = sys_getpid();
 		break;
 	case SYS_trace:
 		ret = sys_trace(args[0], args[1], args[2]);
