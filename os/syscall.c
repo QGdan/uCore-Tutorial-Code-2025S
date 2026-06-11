@@ -179,21 +179,93 @@ uint64 sys_close(int fd)
 
 int sys_fstat(int fd, uint64 stat)
 {
-	//TODO: your job is to complete the syscall
-	return -1;
+	// 获取文件状态信息并复制到用户空间
+	struct proc *p = curr_proc();
+	if (fd < 0 || fd >= FD_BUFFER_SIZE || p->files[fd] == NULL)
+		return -1;
+	struct file *f = p->files[fd];
+	if (f->type == FD_NONE)
+		return -1;
+
+	struct stat st;
+	st.dev = (f->type == FD_STDIO) ? 0 : ROOTDEV;
+	st.ino = (f->type == FD_INODE) ? f->ip->inum : 0;
+	st.type = (f->type == FD_INODE) ? f->ip->type : 0;
+	st.nlink = (f->type == FD_INODE) ? f->ip->nlink : 0;
+	st.size = (f->type == FD_INODE) ? f->ip->size : 0;
+
+	if (copyout(p->pagetable, stat, (char *)&st, sizeof(st)) < 0)
+		return -1;
+	return 0;
 }
 
 int sys_linkat(int olddirfd, uint64 oldpath, int newdirfd, uint64 newpath,
 	       uint64 flags)
 {
-	//TODO: your job is to complete the syscall
-	return -1;
+	// 创建硬链接：将 newpath 指向 oldpath 对应文件的 inode
+	struct proc *p = curr_proc();
+	char old_name[MAXPATH], new_name[MAXPATH];
+
+	if (copyinstr(p->pagetable, old_name, oldpath, MAXPATH) < 0)
+		return -1;
+	if (copyinstr(p->pagetable, new_name, newpath, MAXPATH) < 0)
+		return -1;
+
+	// 查找原文件的 inode
+	struct inode *ip = namei(old_name);
+	if (ip == 0)
+		return -1;
+	ivalid(ip);
+
+	// 不能对目录创建硬链接
+	if (ip->type == T_DIR) {
+		iput(ip);
+		return -1;
+	}
+
+	// 在根目录中创建新的目录项
+	struct inode *dp = root_dir();
+	if (dirlink(dp, new_name, ip->inum) < 0) {
+		iput(dp);
+		iput(ip);
+		return -1;
+	}
+
+	// 增加链接计数
+	ip->nlink++;
+	iupdate(ip);
+	iput(dp);
+	iput(ip);
+	return 0;
 }
 
 int sys_unlinkat(int dirfd, uint64 name, uint64 flags)
 {
-	//TODO: your job is to complete the syscall
-	return -1;
+	// 删除文件的目录项（取消链接）
+	struct proc *p = curr_proc();
+	char path[MAXPATH];
+
+	if (copyinstr(p->pagetable, path, name, MAXPATH) < 0)
+		return -1;
+
+	// 检查文件是否存在（不允许删除目录）
+	struct inode *ip = namei(path);
+	if (ip == 0)
+		return -1;
+	if (ip->type != 0) {
+		ivalid(ip);
+		if (ip->type == T_DIR) {
+			iput(ip);
+			return -1;
+		}
+	}
+	iput(ip);
+
+	// 从根目录中删除目录项
+	struct inode *dp = root_dir();
+	int r = dirunlink(dp, path);
+	iput(dp);
+	return r;
 }
 
 uint64 sys_sbrk(int n)

@@ -15,9 +15,18 @@ struct inode {
 	int ref; // Reference count
 	int valid; // inode has been read from disk?
 	short type; // copy of disk inode
+	short nlink; // Number of hard links
 	uint size;
 	uint addrs[NDIRECT + 1];
-	// LAB4: You may need to add link count here
+};
+
+// Stat structure for fstat syscall
+struct stat {
+	int dev;     // Device number
+	uint ino;    // Inode number
+	short type;  // File type (T_DIR / T_FILE)
+	short nlink; // Number of hard links
+	uint64 size; // File size in bytes
 };
 
 // Defines a file in memory that provides information about the current use of the file and the corresponding inode location
