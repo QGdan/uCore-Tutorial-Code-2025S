@@ -435,7 +435,7 @@ int dirlink(struct inode *dp, char *name, uint inum)
 // Returns 0 on success, -1 if not found.
 int dirunlink(struct inode *dp, char *name)
 {
-	int off;
+	uint off;
 	struct dirent de;
 	struct inode *ip;
 
