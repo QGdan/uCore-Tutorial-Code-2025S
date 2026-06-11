@@ -20,13 +20,17 @@ struct inode {
 	uint addrs[NDIRECT + 1];
 };
 
-// Stat structure for fstat syscall
+// Stat structure for fstat syscall (must match user-space layout)
+// File type modes (Linux-compatible)
+#define FILE 0x100000
+#define DIR  0x040000
+
 struct stat {
-	int dev;     // Device number
-	uint ino;    // Inode number
-	short type;  // File type (T_DIR / T_FILE)
-	short nlink; // Number of hard links
-	uint64 size; // File size in bytes
+	uint64 dev;     // Device number
+	uint64 ino;     // Inode number
+	uint32 mode;    // File type (FILE / DIR)
+	uint32 nlink;   // Number of hard links
+	uint64 pad[7];  // Padding for compatibility
 };
 
 // Defines a file in memory that provides information about the current use of the file and the corresponding inode location

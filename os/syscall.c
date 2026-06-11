@@ -188,11 +188,20 @@ int sys_fstat(int fd, uint64 stat)
 		return -1;
 
 	struct stat st;
-	st.dev = (f->type == FD_STDIO) ? 0 : ROOTDEV;
-	st.ino = (f->type == FD_INODE) ? f->ip->inum : 0;
-	st.type = (f->type == FD_INODE) ? f->ip->type : 0;
-	st.nlink = (f->type == FD_INODE) ? f->ip->nlink : 0;
-	st.size = (f->type == FD_INODE) ? f->ip->size : 0;
+	memset(&st, 0, sizeof(st));
+	if (f->type == FD_STDIO) {
+		st.dev = 0;
+		st.ino = 0;
+		st.mode = FILE;
+		st.nlink = 0;
+	} else if (f->type == FD_INODE) {
+		st.dev = f->ip->dev;
+		st.ino = f->ip->inum;
+		st.mode = (f->ip->type == T_DIR) ? DIR : FILE;
+		st.nlink = f->ip->nlink;
+	} else {
+		return -1;
+	}
 
 	if (copyout(p->pagetable, stat, (char *)&st, sizeof(st)) < 0)
 		return -1;
